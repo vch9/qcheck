@@ -1417,10 +1417,13 @@ module Test = struct
     max_gen : int; (* max number of instances to generate (>= count) *)
     max_fail : int; (* max number of failures *)
     law : 'a -> bool; (* the law to check *)
-    arb : 'a arbitrary; (* how to generate/print/shrink instances *)
+    gen : 'a Gen.t; (* how to generate/print/shrink instances *)
     qcheck1_shrink : ('a -> ('a -> unit) -> unit) option; (* QCheck1-backward-compatible shrinking *)
     if_assumptions_fail: [`Fatal | `Warning] * float;
     mutable name : string; (* name of the law *)
+    pp:('a -> string) option ;
+    collect:('a -> string) option ;
+    stats:'a stat list
   }
 
   type t = | Test : 'a cell -> t
@@ -1431,11 +1434,14 @@ module Test = struct
 
   let get_law {law; _} = law
 
-  let get_arbitrary {arb; _} = arb
+  (* let get_arbitrary {arb; _} = arb *)
+  let get_gen {gen; _} = gen
 
   let get_count {count; _ } = count
 
   let get_long_factor {long_factor; _} = long_factor
+
+  let get_pp {pp; _} = pp
 
   let default_count = 100
 
@@ -1447,12 +1453,12 @@ module Test = struct
 
   let make_cell ?(if_assumptions_fail=default_if_assumptions_fail)
       ?(count=default_count) ?(long_factor=1) ?max_gen
-      ?(max_fail=1) ?(name=fresh_name()) arb law
+      ?(max_fail=1) ?(name=fresh_name()) ?pp ?collect ?(stats=[]) gen law
     =
     let max_gen = match max_gen with None -> count + 200 | Some x->x in
     {
       law;
-      arb;
+      gen;
       max_gen;
       max_fail;
       name;
@@ -1460,6 +1466,9 @@ module Test = struct
       long_factor;
       if_assumptions_fail;
       qcheck1_shrink = None;
+      pp;
+      collect;
+      stats
     }
 
   let make_cell_from_QCheck1 ?(if_assumptions_fail=default_if_assumptions_fail)
@@ -1468,11 +1477,10 @@ module Test = struct
     =
     (* Make a "fake" QCheck2 arbitrary with no shrinking *)
     let fake_gen = Gen.make_primitive ~gen ~shrink:(fun _ -> Seq.empty) in
-    let fake_arb = make fake_gen ?print ?collect ~stats in
     let max_gen = match max_gen with None -> count + 200 | Some x->x in
     {
       law;
-      arb = fake_arb;
+      gen = fake_gen;
       max_gen;
       max_fail;
       name;
@@ -1480,10 +1488,13 @@ module Test = struct
       long_factor;
       if_assumptions_fail;
       qcheck1_shrink = shrink;
+      pp=print;
+      collect;
+      stats;
     }
 
-  let make ?if_assumptions_fail ?count ?long_factor ?max_gen ?max_fail ?name arb law =
-    Test (make_cell ?if_assumptions_fail ?count ?long_factor ?max_gen ?max_fail ?name arb law)
+  let make ?if_assumptions_fail ?count ?long_factor ?max_gen ?max_fail ?name ?pp ?collect ?stats gen law =
+    Test (make_cell ?if_assumptions_fail ?count ?long_factor ?max_gen ?max_fail ?name ?pp ?collect ?stats gen law)
 
   (** {6 Running the test} *)
 
@@ -1534,10 +1545,10 @@ module Test = struct
   let new_input_tree state =
     state.res.R.count_gen <- state.res.R.count_gen + 1;
     state.cur_max_gen <- state.cur_max_gen - 1;
-    state.test.arb.gen state.rand
+    state.test.gen state.rand
 
   (* statistics on inputs *)
-  let collect st i = match st.test.arb.collect with
+  let collect st i = match st.test.collect with
     | None -> ()
     | Some f ->
       let key = f i in
@@ -1764,7 +1775,7 @@ module Test = struct
               state=R.Success; count=0; count_gen=0;
               collect_tbl=lazy (Hashtbl.create 10);
               instances=[]; warnings=[];
-              stats_tbl= List.map (fun stat -> stat, Hashtbl.create 10) cell.arb.stats;
+              stats_tbl= List.map (fun stat -> stat, Hashtbl.create 10) cell.stats;
             };
     } in
     let res = check_state state in
@@ -1775,18 +1786,18 @@ module Test = struct
   exception Test_fail of string * string list
   exception Test_error of string * string * exn * string
 
-  (* print instance using [arb] *)
-  let print_instance arb i = match arb.print with
+  (* print instance using [cell] *)
+  let print_instance cell i = match cell.pp with
     | None -> "<instance>"
     | Some pp -> pp i
 
-  let print_c_ex arb c : string =
+  let print_c_ex cell c : string =
     let buf = Buffer.create 64 in
     begin
       if c.R.shrink_steps > 0
       then Printf.bprintf buf "%s (after %d shrink steps)"
-          (print_instance arb c.R.instance) c.R.shrink_steps
-      else Buffer.add_string buf (print_instance arb c.R.instance)
+          (print_instance cell c.R.instance) c.R.shrink_steps
+      else Buffer.add_string buf (print_instance cell c.R.instance)
     end;
     List.iter
       (fun msg ->
@@ -1912,21 +1923,21 @@ module Test = struct
         | User_fail s -> Some ("qcheck: user fail:\n" ^ s)
         | _ -> None)
 
-  let print_fail arb name l =
-    print_test_fail name (List.map (print_c_ex arb) l)
+  let print_fail cell name l =
+    print_test_fail name (List.map (print_c_ex cell) l)
 
   let print_fail_other name ~msg =
     print_test_fail name [msg]
 
-  let print_error ?(st="") arb name (i,e) =
-    print_test_error name (print_c_ex arb i) e st
+  let print_error ?(st="") cell name (i,e) =
+    print_test_error name (print_c_ex cell i) e st
 
   let check_result cell res = match res.R.state with
     | R.Success -> ()
     | R.Error {instance; exn; backtrace} ->
-      raise (Test_error (cell.name, print_c_ex cell.arb instance, exn, backtrace))
+      raise (Test_error (cell.name, print_c_ex cell instance, exn, backtrace))
     | R.Failed {instances=l} ->
-      let l = List.map (print_c_ex cell.arb) l in
+      let l = List.map (print_c_ex cell) l in
       raise (Test_fail (cell.name, l))
     | R.Failed_other {msg} ->
       raise (Test_fail (cell.name, [msg]))
@@ -1943,8 +1954,7 @@ let find_example ?(name : string = "<example>") ?(count : int option) ~(f : 'a -
      test the property [fun x -> not (f x)]; any counter-example *)
   let gen st =
     let cell =
-      let arb = make gen in
-      Test.make_cell ~max_fail:1 ?count arb (fun x -> not (f x))
+      Test.make_cell ~max_fail:1 ?count gen (fun x -> not (f x))
     in
     let res = Test.check_cell ~rand:st cell in
     begin match res.TestResult.state with

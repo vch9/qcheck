@@ -1939,7 +1939,8 @@ module Test : sig
   val make_cell :
     ?if_assumptions_fail:([`Fatal | `Warning] * float) ->
     ?count:int -> ?long_factor:int -> ?max_gen:int -> ?max_fail:int ->
-    ?name:string -> 'a arbitrary -> ('a -> bool) ->
+    ?name:string -> ?pp:('a -> string) -> ?collect:('a -> string) ->
+    ?stats:'a stat list -> 'a Gen.t -> ('a -> bool) ->
     'a cell
   (** [make_cell arb prop] builds a test that checks property [prop] on instances
       of the generator [arb].
@@ -1973,9 +1974,11 @@ module Test : sig
       @deprecated Migrate to QCheck2 and use {!make_cell} instead.
    *)
 
-  val get_arbitrary : 'a cell -> 'a arbitrary
+  (* val get_arbitrary : 'a cell -> 'a arbitrary *)
+  val get_gen : 'a cell -> 'a Gen.t
   val get_law : 'a cell -> ('a -> bool)
   val get_name : _ cell -> string
+  val get_pp : 'a cell -> ('a -> string) option
   val set_name : _ cell -> string -> unit
 
   val get_count : _ cell -> int
@@ -1993,7 +1996,8 @@ module Test : sig
   val make :
     ?if_assumptions_fail:([`Fatal | `Warning] * float) ->
     ?count:int -> ?long_factor:int -> ?max_gen:int -> ?max_fail:int ->
-    ?name:string -> 'a arbitrary -> ('a -> bool) -> t
+    ?name:string -> ?pp:('a -> string) -> ?collect:('a -> string) ->
+    ?stats:'a stat list -> 'a Gen.t -> ('a -> bool) -> t
   (** [make arb prop] builds a test that checks property [prop] on instances
       of the generator [arb].
       See {!make_cell} for a description of the parameters.
@@ -2028,11 +2032,11 @@ module Test : sig
       means [name] failed on [i] with exception [e], and [st] is the
       stacktrace (if enabled) or an empty string. *)
 
-  val print_instance : 'a arbitrary -> 'a -> string
-  val print_c_ex : 'a arbitrary -> 'a TestResult.counter_ex -> string
-  val print_fail : 'a arbitrary -> string -> 'a TestResult.counter_ex list -> string
+  val print_instance : 'a cell -> 'a -> string
+  val print_c_ex : 'a cell -> 'a TestResult.counter_ex -> string
+  val print_fail : 'a cell -> string -> 'a TestResult.counter_ex list -> string
   val print_fail_other : string -> msg:string -> string
-  val print_error : ?st:string -> 'a arbitrary -> string -> 'a TestResult.counter_ex * exn -> string
+  val print_error : ?st:string -> 'a cell -> string -> 'a TestResult.counter_ex * exn -> string
   val print_test_fail : string -> string list -> string
   val print_test_error : string -> string -> exn -> string -> string
 
