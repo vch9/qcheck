@@ -1050,11 +1050,11 @@ let option a =
     ?print:(Option.map Print.option a.print)
     g
 
-let map ?print ?collect (f : 'a -> 'b) (a : 'a arbitrary) =
+(* let map ?print ?collect (f : 'a -> 'b) (a : 'a arbitrary) =
   make
     ?print
     ?collect
-    (Gen.map f a.gen)
+    (Gen.map f a.gen) *)
 
 (** Internal module taking care of storing generated function bindings.
 
@@ -1067,7 +1067,7 @@ let map ?print ?collect (f : 'a -> 'b) (a : 'a arbitrary) =
 module Poly_tbl : sig
   type ('key, 'value) t
 
-  val create: 'key Observable.t -> 'value arbitrary -> int -> ('key, 'value) t Gen.t
+  val create: 'key Observable.t -> 'value Gen.t -> int -> ('key, 'value) t Gen.t
 
   val get : ('key, 'value) t -> 'key -> 'value option
 
@@ -1082,7 +1082,7 @@ end = struct
     p_tree_bindings_rev : ('key * 'value Tree.t) list ref;
   }
 
-  let create (type k) (type v) (k_obs : k Observable.t) (v_arb : v arbitrary) (size : int) : (k, v) t Gen.t =
+  let create (type k) (type v) (k_obs : k Observable.t) (v_gen : v Gen.t) (size : int) : (k, v) t Gen.t =
     fun st ->
     let module T = Hashtbl.Make(struct
         type t = k
@@ -1099,12 +1099,14 @@ end = struct
           with Not_found ->
             if extend then (
               (* Generate a new value and "record" the binding for potential future display/shrinking *)
-              let value_tree = v_arb.gen st in
+              let value_tree = v_gen st in
               p_tree_bindings_rev := (key, value_tree) :: !p_tree_bindings_rev;
               let v = Tree.root value_tree in
               T.add tbl key v;
               Some v
             ) else None) in
+      let p_print = fun () -> "<fun>" in
+      (* TODO: what happens about the print here ?
       let p_print = (fun () -> match v_arb.print with
           | None -> "<fun>"
           | Some pp_v ->
@@ -1116,7 +1118,7 @@ end = struct
                    (k_obs.Observable.print key) (pp_v value))
               tbl;
             Format.pp_print_flush to_b ();
-            Buffer.contents b) in
+            Buffer.contents b) in *)
       let p_size=(fun size_v -> T.fold (fun _ v n -> n + size_v v) tbl 0) in
     {get; p_print; p_size; p_tree_bindings_rev}
       in
@@ -1147,7 +1149,7 @@ end
 (** Internal representation of functions, used for shrinking and printing (in case of error). *)
 type ('a, 'b) fun_repr_tbl = {
   fun_tbl: ('a, 'b) Poly_tbl.t; (** Input-output bindings *)
-  fun_arb: 'b arbitrary; (** How to generate/print output values *)
+  fun_gen: 'b Gen.t; (** How to generate output values *)
   fun_default: 'b; (** Default value for all inputs not explicitly mapped in {!fun_tbl} *)
 }
 
@@ -1180,8 +1182,8 @@ module Fn = struct
 
   let make_ (r : 'a fun_repr) : 'a fun_ = Fun (r, function_of_repr r)
 
-  let mk_repr tbl arb def =
-    Fun_tbl { fun_tbl=tbl; fun_arb=arb; fun_default=def; }
+  let mk_repr tbl gen def =
+    Fun_tbl { fun_tbl=tbl; fun_gen=gen; fun_default=def; }
 
   let map_repr f repr = Fun_map (f, repr)
 
@@ -1195,11 +1197,13 @@ module Fn = struct
       = fun buf r -> match r with
         | Fun_map (_, sub_repr) -> aux buf sub_repr
         | Fun_tbl r ->
-          Buffer.add_string buf (Poly_tbl.print r.fun_tbl);
-          Printf.bprintf buf "_ -> %s" (match r.fun_arb.print with
+           Buffer.add_string buf (Poly_tbl.print r.fun_tbl);
+           Printf.bprintf buf "_ -> <opaque>"
+           (* TODO: what happens to the print ?
+          Printf.bprintf buf "_ -> %s" (match r.fun_gen.print with
               | None -> "<opaque>"
               | Some print -> print r.fun_default
-            );
+            ); *)
     in
     Printf.bprintf buf "{";
     aux buf r;
@@ -1208,16 +1212,16 @@ module Fn = struct
 
   let print (Fun (repr, _real_function)) = print_repr repr
 
-  (** [gen_rep obs arb] creates a function generator. Input values are observed with [obs] and
-      output values are generated with [arb]. *)
-  let gen_rep (obs : 'a Observable.t) (arb : 'b arbitrary) : ('a -> 'b) fun_repr Gen.t =
-    Gen.liftA2 (fun default_value poly_tbl -> mk_repr poly_tbl arb default_value) arb.gen (Poly_tbl.create obs arb 8)
+  (** [gen_rep obs gen] creates a function generator. Input values are observed with [obs] and
+      output values are generated with [gen]. *)
+  let gen_rep (obs : 'a Observable.t) (gen : 'b Gen.t) : ('a -> 'b) fun_repr Gen.t =
+    Gen.liftA2 (fun default_value poly_tbl -> mk_repr poly_tbl gen default_value) gen (Poly_tbl.create obs gen 8)
 
-  let gen (obs : 'a Observable.t) (arb : 'b arbitrary) : ('a -> 'b) fun_ Gen.t =
-    Gen.map make_ (gen_rep obs arb)
+  let gen (obs : 'a Observable.t) (gen : 'b Gen.t) : ('a -> 'b) fun_ Gen.t =
+    Gen.map make_ (gen_rep obs gen)
 end
 
-let fun1 obs arb = make ~print:Fn.print (Fn.gen obs arb)
+let fun1 obs gen = (Fn.gen obs gen)
 
 module Tuple = struct
   (** heterogeneous list (generic tuple) used to uncurry functions *)
@@ -1275,7 +1279,7 @@ module Tuple = struct
       ~hash:(hash o)
       (print o)
 
-  let gen (o:'a obs) (ret:'b arbitrary) : ('a t -> 'b) fun_ Gen.t =
+  let gen (o:'a obs) (ret:'b Gen.t) : ('a t -> 'b) fun_ Gen.t =
     Fn.gen (observable o) ret
 
   module Infix = struct
@@ -1285,26 +1289,24 @@ module Tuple = struct
   include Infix
 end
 
-let fun_nary (o:_ Tuple.obs) ret : _ arbitrary =
-  make
-    ~print:Fn.print
-    (Tuple.gen o ret)
+let fun_nary (o:_ Tuple.obs) ret : _ Gen.t =
+  (Tuple.gen o ret)
 
-let fun2 o1 o2 ret =
+let fun2 o1 o2 ret : ('a -> 'b -> 'c) fun_ Gen.t =
   let open Tuple in
-  map
+  Gen.map
     (Fn.map_fun (fun g x y -> g (x @:: y @:: nil)))
     (fun_nary (o1 @-> o2 @-> o_nil) ret)
 
 let fun3 o1 o2 o3 ret =
   let open Tuple in
-  map
+  Gen.map
     (Fn.map_fun (fun g x y z -> g (x @:: y @:: z @:: nil)))
     (fun_nary (o1 @-> o2 @-> o3 @-> o_nil) ret)
 
 let fun4 o1 o2 o3 o4 ret =
   let open Tuple in
-  map
+  Gen.map
     (Fn.map_fun (fun g x y z w -> g (x @:: y @:: z @:: w @:: nil)))
     (fun_nary (o1 @-> o2 @-> o3 @-> o4 @-> o_nil) ret)
 

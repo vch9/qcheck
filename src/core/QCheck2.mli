@@ -680,6 +680,8 @@ module Gen : sig
       fixpoint computation may change the value of this state in the recursive
       calls.
 
+      TODO: check here arbitrary state 'a
+
       In particular, this can be used for size-bounded generators (with ['a] as [int]).
       The passed size-parameter should decrease to ensure termination. *)
 
@@ -1645,7 +1647,7 @@ type 'f fun_repr
 
 (** A function packed with the data required to print/shrink it.
 
-    The idiomatic way to use any [fun_] arbitrary is to directly pattern match
+    The idiomatic way to use any [fun_] gen is to directly pattern match
     on it to obtain the executable function.
 
     For example (note the [Fun (_, f)] part):
@@ -1664,9 +1666,9 @@ type 'f fun_repr
 *)
 type 'f fun_ = Fun of 'f fun_repr * 'f
 
-val fun1 : 'a Observable.t -> 'b arbitrary -> ('a -> 'b) fun_ arbitrary
-(** [fun1 obs arb] generates random functions that take an argument observable
-    via [obs] and map to random values generated with [arb].
+val fun1 : 'a Observable.t -> 'b Gen.t -> ('a -> 'b) fun_ Gen.t
+(** [fun1 obs gen] generates random functions that take an argument observable
+    via [obs] and map to random values generated with [gen].
     To write functions with multiple arguments, it's better to use {!Tuple}
     or {!Observable.pair} rather than applying {!fun_} several times
     (shrinking will be faster).
@@ -1675,8 +1677,8 @@ val fun1 : 'a Observable.t -> 'b arbitrary -> ('a -> 'b) fun_ arbitrary
 val fun2 :
   'a Observable.t ->
   'b Observable.t ->
-  'c arbitrary ->
-  ('a -> 'b -> 'c) fun_ arbitrary
+  'c Gen.t ->
+  ('a -> 'b -> 'c) fun_ Gen.t
 (** Specialized version of {!fun_nary} for functions of 2 arguments, for convenience.
     @since 0.6 *)
 
@@ -1684,8 +1686,8 @@ val fun3 :
   'a Observable.t ->
   'b Observable.t ->
   'c Observable.t ->
-  'd arbitrary ->
-  ('a -> 'b -> 'c -> 'd) fun_ arbitrary
+  'd Gen.t ->
+  ('a -> 'b -> 'c -> 'd) fun_ Gen.t
 (** Specialized version of {!fun_nary} for functions of 3 arguments, for convenience.
     @since 0.6 *)
 
@@ -1694,14 +1696,14 @@ val fun4 :
   'b Observable.t ->
   'c Observable.t ->
   'd Observable.t ->
-  'e arbitrary ->
-  ('a -> 'b -> 'c -> 'd -> 'e) fun_ arbitrary
+  'e Gen.t ->
+  ('a -> 'b -> 'c -> 'd -> 'e) fun_ Gen.t
 (** Specialized version of {!fun_nary} for functions of 4 arguments, for convenience.
     @since 0.6 *)
 
-val fun_nary : 'a Tuple.obs -> 'b arbitrary -> ('a Tuple.t -> 'b) fun_ arbitrary
-(** [fun_nary tuple_obs arb] generates random n-ary functions. Arguments are observed
-    using [tuple_obs] and return values are generated using [arb].
+val fun_nary : 'a Tuple.obs -> 'b Gen.t -> ('a Tuple.t -> 'b) fun_ Gen.t
+(** [fun_nary tuple_obs gen] generates random n-ary functions. Arguments are observed
+    using [tuple_obs] and return values are generated using [gen].
 
     Example (the property is wrong as a random function may return [false], this is for
     the sake of demonstrating the syntax):
@@ -1761,10 +1763,10 @@ val quad : 'a arbitrary -> 'b arbitrary -> 'c arbitrary -> 'd arbitrary -> ('a *
 val always : ?print:'a Print.t -> 'a -> 'a arbitrary
 (** Always return the same element. *)
 
-val map : ?print:'b Print.t -> ?collect:('b -> string) -> ('a -> 'b) -> 'a arbitrary -> 'b arbitrary
+(* val map : ?print:'b Print.t -> ?collect:('b -> string) -> ('a -> 'b) -> 'a arbitrary -> 'b arbitrary
 (** [map f a] returns a new arbitrary instance that generates values using
     [a] and then transforms them through [f].
- *)
+ *) *)
 
 val map_same_type : ('a -> 'a) -> 'a arbitrary -> 'a arbitrary
 (** Specialization of [map] when the transformation preserves the type, which
