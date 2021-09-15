@@ -10,7 +10,8 @@ all rights reserved.
 let poly_compare=compare
 
 module RS = Random.State
-
+type state = Random of RS.t | Fd of Unix.file_descr
+ 
 let rec foldn ~f ~init:acc i =
   if i = 0 then acc else foldn ~f ~init:(f acc i) (i-1)
 
@@ -223,9 +224,9 @@ end
 
 module Gen = struct
 
-  type 'a t = RS.t -> 'a Tree.t
+  type 'a t = state -> 'a Tree.t
 
-  type 'a sized = int -> RS.t -> 'a Tree.t
+  type 'a sized = int -> state -> 'a Tree.t
 
   let map f x = fun st -> Tree.map f (x st)
 
@@ -258,13 +259,39 @@ module Gen = struct
 
   let sequence_list (l : 'a t list) : 'a list t = fun st -> List.map (fun gen -> gen st) l |> Tree.sequence_list
 
-  let make_primitive ~(gen : RS.t -> 'a) ~(shrink : 'a -> 'a Seq.t) : 'a t = fun st ->
+  let make_primitive ~(gen : state -> 'a) ~(shrink : 'a -> 'a Seq.t) : 'a t = fun st ->
     Tree.make_primitive shrink (gen st)
 
   let parse_origin (loc : string) (pp : Format.formatter -> 'a -> unit) ~(origin : 'a) ~(low : 'a) ~(high : 'a) : 'a =
     if origin < low then invalid_arg Format.(asprintf "%s: origin value %a is lower than low value %a" loc pp origin pp low)
     else if origin > high then invalid_arg Format.(asprintf "%s: origin value %a is greater than high value %a" loc pp origin pp high)
     else origin
+
+  let read_bytes st n =
+    let buf = Bytes.create n in
+    let _ =
+      match st with
+      | Random rand ->
+         for i = 0 to n - 1 do
+           Bytes.set buf i @@ Char.chr @@ Random.State.bits rand land 0xff
+         done
+      | Fd ch ->
+         let _ = Unix.read ch buf 0 n in ()
+    in
+    buf
+
+  let read_byte st =
+    let buf = read_bytes st 1 in
+    Char.code (Bytes.get buf 0)
+
+  let bool st =
+    read_byte st land 1 = 1
+
+  let float : float t = fun st ->
+    let buf = read_bytes st 8 in
+    let x = EndianBytes.LittleEndian.get_double buf 0 in
+    let shrink a = fun () -> Shrink.float_towards 0. a () in
+    Tree.make_primitive shrink x
 
   let small_nat : int t = fun st ->
     let p = RS.float st 1. in
@@ -299,13 +326,6 @@ module Gen = struct
     if RS.bool st
     then Tree.Tree (true, Seq.return false_gen)
     else false_gen
-
-  let float : float t = fun st ->
-    let x = exp (RS.float st 15. *. (if RS.bool st then 1. else -1.))
-            *. (if RS.bool st then 1. else -1.)
-    in
-    let shrink a = fun () -> Shrink.float_towards 0. a () in
-    Tree.make_primitive shrink x
 
   let pfloat : float t = float >|= abs_float
 
@@ -384,7 +404,7 @@ module Gen = struct
      Technically this function is a special case of [random_binary_string] where the size is
      {!Sys.int_size}.
   *)
-  let pint_raw : RS.t -> int =
+  let pint_raw : state -> int =
     if Sys.word_size = 32
     then fun st -> RS.bits st
     else (* word size = 64 *)
@@ -504,7 +524,7 @@ module Gen = struct
   let char_range ?(origin : char option) (a : char) (b : char) : char t =
     (int_range ~origin:(Char.code (Option.value ~default:a origin)) (Char.code a) (Char.code b)) >|= Char.chr
 
-  let random_binary_string (length : int) (st : RS.t) : string =
+  let random_binary_string (length : int) (st : state) : string =
     (* 0b011101... *)
     let s = Bytes.create (length + 2) in
     Bytes.set s 0 '0';
@@ -1353,7 +1373,7 @@ module Test = struct
     test: 'a cell;
     step: 'a step;
     handler : 'a handler;
-    rand: RS.t;
+    rand: state;
     mutable res: 'a TestResult.t;
     mutable cur_count: int;  (** number of iterations remaining to do *)
     mutable cur_max_gen: int; (** maximum number of generations allowed *)
@@ -1797,6 +1817,6 @@ let find_example ?(name : string = "<example>") ?(count : int option) ~(f : 'a -
   in
   gen
 
-let find_example_gen ?(rand : RS.t option) ?(name : string option) ?(count : int option) ~(f : 'a -> bool) (gen : 'a Gen.t) : 'a =
+let find_example_gen ?(rand : state option) ?(name : string option) ?(count : int option) ~(f : 'a -> bool) (gen : 'a Gen.t) : 'a =
   let g = find_example ?name ?count ~f gen in
   Gen.generate1 ?rand g
