@@ -69,6 +69,41 @@ let test_weight_poly =
   |>
     QCheck_alcotest.to_alcotest
 
+(** {2. Freq distribution with weights} *)
+
+type languages =
+  | English [@weight 100]
+  | Spanish [@weight 10]
+  | French [@weight 1]
+[@@deriving qcheck]
+
+let test_distrib_freq () =
+  let count_en = ref 0 and count_es = ref 0 and count_fr = ref 0 in
+  let l = generate ~n:1000 gen_languages in
+  List.iter (function
+      | English -> incr count_en
+      | Spanish -> incr count_es
+      | French -> incr count_fr) l;
+  Alcotest.(check (triple int int int)) "test freq distribution"
+    (!count_en, !count_es, !count_fr) (900, 88, 12)
+
+type poly_languages =
+  [ `English [@weight 100]
+  | `Spanish [@weight 10]
+  | `French [@weight 1]
+  ]
+[@@deriving qcheck]
+
+let test_poly_distrib_freq () =
+  let count_en = ref 0 and count_es = ref 0 and count_fr = ref 0 in
+  let l = generate ~n:1000 gen_poly_languages in
+  List.iter (function
+      | `English -> incr count_en
+      | `Spanish -> incr count_es
+      | `French -> incr count_fr) l;
+  Alcotest.(check (triple int int int)) "test freq distribution"
+    (!count_en, !count_es, !count_fr) (900, 88, 12)
+
 (** {2. Execute tests} *)
 
 let () = Alcotest.run "Test_Variant"
@@ -76,6 +111,8 @@ let () = Alcotest.run "Test_Variant"
              Alcotest.[
                  test_case "test_variants" `Quick test_variants;
                  test_case "test_poly_variants" `Quick test_poly_variants;
+                 test_case "test_poly_distrib_freq" `Quick test_distrib_freq;
+                 test_case "test_distrib_freq" `Quick test_poly_distrib_freq;
                  test_weight;
                  test_weight_poly
            ])]

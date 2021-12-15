@@ -4,7 +4,7 @@ open QCheck
 
 let seed = [| 42 |]
 
-let generate gen = Gen.generate ~n:20 ~rand:(Random.State.make seed) gen
+let generate ?(n=20) gen = Gen.generate ~n ~rand:(Random.State.make seed) gen
 
 (** [test_compare msg eq gen_ref gen_cand] will generate with the same seed
     [gen_ref] and [gen_cand], and test with Alcotest that both generators
